@@ -10,7 +10,6 @@ import {
 import { createJettonTransferPayload } from "./jettonTransfer";
 
 const MERCHANT_WALLET_ADDRESS = "UQB--aXd5j9qAXJKUpPbhTIxluDs84asO_1G6SeTC53jyvRk";
-// Replace this with your target Jetton Wallet / Master Address if executing Jetton transfers directly
 const JETTON_WALLET_ADDRESS = "UQB--aXd5j9qAXJKUpPbhTIxluDs84asO_1G6SeTC53jyvRk";
 
 interface Prize {
@@ -42,6 +41,9 @@ function GameContent() {
   const [isClaiming, setIsClaiming] = useState<boolean>(false);
   const [paymentStatus, setPaymentStatus] = useState<"idle" | "pending" | "success" | "failed">("idle");
 
+  // Dynamic payment amount state (default: 1 TON/Token)
+  const [paymentAmount, setPaymentAmount] = useState<number>(1);
+
   const userAddress = useTonAddress();
   const [tonConnectUI] = useTonConnectUI();
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -50,14 +52,16 @@ function GameContent() {
   const numPrizes = PRIZES.length;
   const segmentAngle = 360 / numPrizes;
 
-  const sendCoursePaymentTransaction = useCallback(async () => {
+  // Accept amountToPay as a parameter (defaults to paymentAmount state)
+  const sendCoursePaymentTransaction = useCallback(async (amountToPay: number = paymentAmount) => {
     if (!userAddress) return;
 
     try {
       setPaymentStatus("pending");
-      setDebugLog("Building Jetton payload and preparing transaction...");
+      setDebugLog(`Building Jetton payload for ${amountToPay} Tokens...`);
 
-      const payloadBase64 = await createJettonTransferPayload(MERCHANT_WALLET_ADDRESS, 5);
+      // Generate payload with dynamic amount
+      const payloadBase64 = await createJettonTransferPayload(MERCHANT_WALLET_ADDRESS, amountToPay);
 
       const transaction = {
         validUntil: Math.floor(Date.now() / 1000) + 600,
@@ -70,17 +74,17 @@ function GameContent() {
         ],
       };
 
-      setDebugLog("Sending transaction to wallet...");
+      setDebugLog(`Sending ${amountToPay} Token transaction to wallet...`);
       const result = await tonConnectUI.sendTransaction(transaction);
       console.log("Transaction Result:", result);
       setPaymentStatus("success");
-      setDebugLog("Payment successful! Course access granted.");
+      setDebugLog("Payment successful! Access granted.");
     } catch (error: any) {
       console.error("Payment Error:", error);
       setPaymentStatus("failed");
       setDebugLog(`Payment cancelled or failed: ${error?.message || "User rejected"}`);
     }
-  }, [userAddress, tonConnectUI]);
+  }, [userAddress, tonConnectUI, balance]);
 
   useEffect(() => {
     if (!userAddress) {
@@ -130,11 +134,11 @@ function GameContent() {
     if (!hasRequestedPayment.current) {
       hasRequestedPayment.current = true;
       const timer = setTimeout(() => {
-        sendCoursePaymentTransaction();
+        sendCoursePaymentTransaction(paymentAmount);
       }, 1200);
       return () => clearTimeout(timer);
     }
-  }, [userAddress, sendCoursePaymentTransaction]);
+  }, [userAddress, sendCoursePaymentTransaction, paymentAmount]);
 
   const getRandomPrizeIndex = useCallback((): number => {
     const totalWeight = PRIZES.reduce((acc, item) => acc + item.weight, 0);
@@ -228,10 +232,29 @@ function GameContent() {
 
       {/* Mobile Debug / Payment Console */}
       <div className="z-10 w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-3 mb-4 text-xs font-mono text-slate-300">
-        <div className="font-bold text-amber-400 mb-1 uppercase tracking-wider flex justify-between">
+        <div className="font-bold text-amber-400 mb-2 uppercase tracking-wider flex justify-between items-center">
           <span>📱 Mobile Console</span>
-          <span className="text-cyan-400">Course Price: 5 Jetton</span>
+          <span className="text-cyan-400">Price: {paymentAmount} Token</span>
         </div>
+
+        {/* Input to change amount dynamically */}
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-slate-400">Set Amount:</span>
+          {[1, 2, 5].map((amt) => (
+            <button
+              key={amt}
+              onClick={() => setPaymentAmount(amt)}
+              className={`px-2 py-1 rounded text-xs font-bold transition-all ${
+                paymentAmount === amt
+                  ? "bg-amber-500 text-slate-950"
+                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              {amt} Token
+            </button>
+          ))}
+        </div>
+
         <div>
           <span className="text-slate-500">Address: </span>
           {userAddress ? (
@@ -270,11 +293,13 @@ function GameContent() {
 
         {userAddress && (
           <button
-            onClick={sendCoursePaymentTransaction}
+            onClick={() => sendCoursePaymentTransaction(paymentAmount)}
             disabled={paymentStatus === "pending"}
             className="mt-3 w-full py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg text-xs font-bold hover:bg-amber-500/30 transition-all disabled:opacity-50"
           >
-            {paymentStatus === "pending" ? "Waiting for Tonkeeper..." : "Pay 5 Tokens for Course"}
+            {paymentStatus === "pending"
+              ? "Waiting for Tonkeeper..."
+              : `Pay ${paymentAmount} Tokens`}
           </button>
         )}
       </div>
