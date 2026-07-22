@@ -1,0 +1,4 @@
+{
+   "tailwindCSS.experimental.configFile": "app/globals.css",
+   "css.validate": false,
+}
