@@ -32,6 +32,8 @@ function GameContent() {
   const [showModal, setShowModal] = useState<boolean>(false);
   const [balance, setBalance] = useState<number>(0);
   const [walletTonBalance, setWalletTonBalance] = useState<string | null>(null);
+  const [rawNanotons, setRawNanotons] = useState<string | null>(null);
+  const [debugLog, setDebugLog] = useState<string>("Waiting for wallet connection...");
   const [isClaiming, setIsClaiming] = useState<boolean>(false);
 
   const userAddress = useTonAddress();
@@ -41,14 +43,16 @@ function GameContent() {
   const numPrizes = PRIZES.length;
   const segmentAngle = 360 / numPrizes;
 
-  // Fetch real TON balance from blockchain when wallet connects
   useEffect(() => {
     if (!userAddress) {
       setWalletTonBalance(null);
+      setRawNanotons(null);
+      setDebugLog("Wallet disconnected.");
       return;
     }
 
     const fetchTonBalance = async () => {
+      setDebugLog("Fetching balance from TON Center API...");
       try {
         const response = await fetch("https://toncenter.com/api/v2/jsonRPC", {
           method: "POST",
@@ -66,14 +70,21 @@ function GameContent() {
         const data = await response.json();
 
         if (data.ok) {
-          // Convert nanotons to TON
           const tonAmount = Number(data.result) / 1e9;
-          setWalletTonBalance(tonAmount.toFixed(4));
+          const formattedTon = tonAmount.toFixed(4);
+
+          setWalletTonBalance(formattedTon);
+          setRawNanotons(data.result);
+          setDebugLog(`Success! Balance fetched: ${formattedTon} TON`);
+
           console.log("Connected Wallet Address:", userAddress);
           console.log("Wallet Balance (TON):", tonAmount);
           console.log("Raw Nanotons:", data.result);
+        } else {
+          setDebugLog(`API Error: ${JSON.stringify(data)}`);
         }
-      } catch (error) {
+      } catch (error: any) {
+        setDebugLog(`Fetch failed: ${error?.message || "Network Error"}`);
         console.error("Failed to fetch TON balance:", error);
       }
     };
@@ -129,9 +140,7 @@ function GameContent() {
 
     try {
       setIsClaiming(true);
-
       await new Promise((resolve) => setTimeout(resolve, 1500));
-
       setBalance((prev) => parseFloat((prev + wonPrize.amount).toFixed(2)));
       setShowModal(false);
     } catch (error) {
@@ -156,10 +165,11 @@ function GameContent() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-white p-4 font-sans select-none relative overflow-hidden">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-white p-4 font-sans select-none relative overflow-x-hidden">
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-amber-500/10 rounded-full blur-[120px] pointer-events-none" />
 
-      <div className="z-10 w-full max-w-md flex justify-between items-center mb-6 px-2">
+      {/* Header Bar */}
+      <div className="z-10 w-full max-w-md flex justify-between items-center mb-4 px-2">
         <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-800 p-3 px-5 rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
           <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-widest">
             Game Balance
@@ -172,6 +182,41 @@ function GameContent() {
         <TonConnectButton />
       </div>
 
+      {/* Mobile Debug / On-Chain Balance Info Display */}
+      <div className="z-10 w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-3 mb-4 text-xs font-mono text-slate-300">
+        <div className="font-bold text-amber-400 mb-1 uppercase tracking-wider">
+          📱 Mobile Debug Info
+        </div>
+        <div>
+          <span className="text-slate-500">Address: </span>
+          {userAddress ? (
+            <span className="text-emerald-400 break-all">{userAddress}</span>
+          ) : (
+            <span className="text-slate-500">Not Connected</span>
+          )}
+        </div>
+        <div>
+          <span className="text-slate-500">TON Balance: </span>
+          {walletTonBalance !== null ? (
+            <span className="text-cyan-400 font-bold">{walletTonBalance} TON</span>
+          ) : (
+            <span className="text-slate-500">N/A</span>
+          )}
+        </div>
+        <div>
+          <span className="text-slate-500">Nanotons: </span>
+          {rawNanotons !== null ? (
+            <span className="text-slate-400">{rawNanotons}</span>
+          ) : (
+            <span className="text-slate-500">N/A</span>
+          )}
+        </div>
+        <div className="mt-1 pt-1 border-t border-slate-800 text-[10px] text-amber-300/80">
+          Status: {debugLog}
+        </div>
+      </div>
+
+      {/* Wheel Container */}
       <div className="relative flex items-center justify-center my-2 z-10">
         <div className="absolute -top-5 z-30 filter drop-shadow-[0_4px_12px_rgba(245,158,11,0.8)]">
           <div className="w-0 h-0 border-l-[18px] border-l-transparent border-r-[18px] border-r-transparent border-t-[32px] border-t-amber-400" />
@@ -247,6 +292,7 @@ function GameContent() {
         </div>
       </div>
 
+      {/* Claim Modal */}
       {showModal && wonPrize && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl text-center max-w-sm w-full shadow-[0_0_50px_rgba(245,158,11,0.2)] flex flex-col items-center">
