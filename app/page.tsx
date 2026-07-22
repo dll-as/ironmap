@@ -301,7 +301,7 @@ function GameContent() {
 
 export default function WheelOfFortune() {
   return (
-    <TonConnectUIProvider manifestUrl="tonconnect-manifest.json">
+    <TonConnectUIProvider manifestUrl="https://ironmap-seven.vercel.app/tonconnect-manifest.json">
       <GameContent />
     </TonConnectUIProvider>
   );
