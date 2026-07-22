@@ -7,11 +7,8 @@ import {
   useTonConnectUI,
   useTonAddress,
 } from "@tonconnect/ui-react";
-import { createJettonTransferPayload } from "./jettonTransfer";
 
 const MERCHANT_WALLET_ADDRESS = "UQB--aXd5j9qAXJKUpPbhTIxluDs84asO_1G6SeTC53jyvRk";
-// Replace this with your target Jetton Wallet / Master Address if executing Jetton transfers directly
-const JETTON_WALLET_ADDRESS = "UQB--aXd5j9qAXJKUpPbhTIxluDs84asO_1G6SeTC53jyvRk";
 
 interface Prize {
   id: number;
@@ -55,22 +52,20 @@ function GameContent() {
 
     try {
       setPaymentStatus("pending");
-      setDebugLog("Building Jetton payload and preparing transaction...");
+      setDebugLog("Sending 5 TON Course Payment transaction to wallet...");
 
-      const payloadBase64 = await createJettonTransferPayload(MERCHANT_WALLET_ADDRESS, 5);
+      const amountInNanotons = "5000000000";
 
       const transaction = {
         validUntil: Math.floor(Date.now() / 1000) + 600,
         messages: [
           {
-            address: JETTON_WALLET_ADDRESS,
-            amount: "50000000", // Gas fee in nanotons (0.05 TON)
-            payload: payloadBase64,
+            address: MERCHANT_WALLET_ADDRESS,
+            amount: amountInNanotons,
           },
         ],
       };
 
-      setDebugLog("Sending transaction to wallet...");
       const result = await tonConnectUI.sendTransaction(transaction);
       console.log("Transaction Result:", result);
       setPaymentStatus("success");
@@ -230,7 +225,7 @@ function GameContent() {
       <div className="z-10 w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-3 mb-4 text-xs font-mono text-slate-300">
         <div className="font-bold text-amber-400 mb-1 uppercase tracking-wider flex justify-between">
           <span>📱 Mobile Console</span>
-          <span className="text-cyan-400">Course Price: 5 Jetton</span>
+          <span className="text-cyan-400">Course Price: 5 TON</span>
         </div>
         <div>
           <span className="text-slate-500">Address: </span>
@@ -274,7 +269,7 @@ function GameContent() {
             disabled={paymentStatus === "pending"}
             className="mt-3 w-full py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg text-xs font-bold hover:bg-amber-500/30 transition-all disabled:opacity-50"
           >
-            {paymentStatus === "pending" ? "Waiting for Tonkeeper..." : "Pay 5 Tokens for Course"}
+            {paymentStatus === "pending" ? "Waiting for Tonkeeper..." : "Pay 5 TON for Course"}
           </button>
         )}
       </div>
