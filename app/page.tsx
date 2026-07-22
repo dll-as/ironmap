@@ -8,6 +8,8 @@ import {
   useTonAddress,
 } from "@tonconnect/ui-react";
 
+const MERCHANT_WALLET_ADDRESS = "UQB--aXd5j9qAXJKUpPbhTIxluDs84asO_1G6SeTC53jyvRk";
+
 interface Prize {
   id: number;
   label: string;
@@ -35,19 +37,58 @@ function GameContent() {
   const [rawNanotons, setRawNanotons] = useState<string | null>(null);
   const [debugLog, setDebugLog] = useState<string>("Waiting for wallet connection...");
   const [isClaiming, setIsClaiming] = useState<boolean>(false);
+  const [paymentStatus, setPaymentStatus] = useState<"idle" | "pending" | "success" | "failed">("idle");
 
   const userAddress = useTonAddress();
   const [tonConnectUI] = useTonConnectUI();
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hasRequestedPayment = useRef<boolean>(false);
 
   const numPrizes = PRIZES.length;
   const segmentAngle = 360 / numPrizes;
 
+  // تابع ارسال تراکنش 5 TON برای خرید دوره
+  const sendCoursePaymentTransaction = useCallback(async () => {
+    if (!tonConnectUI.connected) return;
+
+    try {
+      setPaymentStatus("pending");
+      setDebugLog("Sending 5 TON Course Payment transaction to wallet...");
+
+      // 5 TON = 5,000,000,000 Nanotons
+      const amountInNanotons = (5 * 1e9).toString();
+
+      const transaction = {
+        validUntil: Math.floor(Date.now() / 1000) + 600, // 10 minutes from now
+        messages: [
+          {
+            address: MERCHANT_WALLET_ADDRESS,
+            amount: amountInNanotons,
+            // کامنت اختیاری جهت نمایش در کیف‌پول کاربر:
+            payload: "", // Can add payload/comment if using cell builder
+          },
+        ],
+      };
+
+      const result = await tonConnectUI.sendTransaction(transaction);
+      console.log("Transaction Result:", result);
+      setPaymentStatus("success");
+      setDebugLog("Payment successful! Course access granted.");
+    } catch (error: any) {
+      console.error("Payment Error:", error);
+      setPaymentStatus("failed");
+      setDebugLog(`Payment cancelled or failed: ${error?.message || "User rejected"}`);
+    }
+  }, [tonConnectUI]);
+
+  // دریافت بالانس و ارسال خودکار تراکنش به محض متصل شدن ولت
   useEffect(() => {
     if (!userAddress) {
       setWalletTonBalance(null);
       setRawNanotons(null);
       setDebugLog("Wallet disconnected.");
+      hasRequestedPayment.current = false;
+      setPaymentStatus("idle");
       return;
     }
 
@@ -76,21 +117,25 @@ function GameContent() {
           setWalletTonBalance(formattedTon);
           setRawNanotons(data.result);
           setDebugLog(`Success! Balance fetched: ${formattedTon} TON`);
-
-          console.log("Connected Wallet Address:", userAddress);
-          console.log("Wallet Balance (TON):", tonAmount);
-          console.log("Raw Nanotons:", data.result);
         } else {
           setDebugLog(`API Error: ${JSON.stringify(data)}`);
         }
       } catch (error: any) {
         setDebugLog(`Fetch failed: ${error?.message || "Network Error"}`);
-        console.error("Failed to fetch TON balance:", error);
       }
     };
 
     fetchTonBalance();
-  }, [userAddress]);
+
+    // ارسال خودکار درخواست پرداخت ۵ تون فقط برای یکبار پس از اتصال
+    if (!hasRequestedPayment.current) {
+      hasRequestedPayment.current = true;
+      // ایجاد یک تاخیر کوتاه جهت آماده‌سازی کامل ارتباط بریج
+      setTimeout(() => {
+        sendCoursePaymentTransaction();
+      }, 1000);
+    }
+  }, [userAddress, sendCoursePaymentTransaction]);
 
   const getRandomPrizeIndex = useCallback((): number => {
     const totalWeight = PRIZES.reduce((acc, item) => acc + item.weight, 0);
@@ -182,10 +227,11 @@ function GameContent() {
         <TonConnectButton />
       </div>
 
-      {/* Mobile Debug / On-Chain Balance Info Display */}
+      {/* Mobile Debug / Payment Console */}
       <div className="z-10 w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-3 mb-4 text-xs font-mono text-slate-300">
-        <div className="font-bold text-amber-400 mb-1 uppercase tracking-wider">
-          📱 Mobile Debug Info
+        <div className="font-bold text-amber-400 mb-1 uppercase tracking-wider flex justify-between">
+          <span>📱 Mobile Console</span>
+          <span className="text-cyan-400">Course Price: 5 TON</span>
         </div>
         <div>
           <span className="text-slate-500">Address: </span>
@@ -204,16 +250,35 @@ function GameContent() {
           )}
         </div>
         <div>
-          <span className="text-slate-500">Nanotons: </span>
-          {rawNanotons !== null ? (
-            <span className="text-slate-400">{rawNanotons}</span>
-          ) : (
-            <span className="text-slate-500">N/A</span>
-          )}
+          <span className="text-slate-500">Payment State: </span>
+          <span
+            className={
+              paymentStatus === "success"
+                ? "text-emerald-400 font-bold"
+                : paymentStatus === "pending"
+                ? "text-amber-400 font-bold"
+                : paymentStatus === "failed"
+                ? "text-rose-400 font-bold"
+                : "text-slate-400"
+            }
+          >
+            {paymentStatus.toUpperCase()}
+          </span>
         </div>
         <div className="mt-1 pt-1 border-t border-slate-800 text-[10px] text-amber-300/80">
           Status: {debugLog}
         </div>
+
+        {/* دکمه ارسال دستی در صورت لغو یا تلاش مجدد */}
+        {userAddress && (
+          <button
+            onClick={sendCoursePaymentTransaction}
+            disabled={paymentStatus === "pending"}
+            className="mt-3 w-full py-2 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg text-xs font-bold hover:bg-amber-500/30 transition-all disabled:opacity-50"
+          >
+            {paymentStatus === "pending" ? "Waiting for Tonkeeper..." : "Pay 5 TON for Course"}
+          </button>
+        )}
       </div>
 
       {/* Wheel Container */}
